@@ -44,9 +44,9 @@ async function bootstrap() {
     }) => {
       csvData += [
         sequence,
-        temperature,
-        humidity,
-        ((windSpeed / 900) * WIND_SPEED_CONSTANT).toFixed(2),
+        temperature.toString().replace('.', ','),
+        humidity.toString().replace('.', ','),
+        ((windSpeed / 900) * WIND_SPEED_CONSTANT).toFixed(2).toString().replace('.', ','),
         minWindSpeed,
         rainMillimeter * RAIN_CONSTANT,
         Intl.DateTimeFormat(
