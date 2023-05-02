@@ -25,12 +25,12 @@ class Handler {
         console.log('Dados com formato errado!!!');
       }
       await service.createStationData({
-        temperature: data.temperatura,
-        humidity: data.umidade,
+        temperature: data.temp,
+        humidity: data.umi,
         windSpeed: data.vento,
-        minWindSpeed: data.minimo,
+        minWindSpeed: data.min,
         rainMillimeter: data.chuva,
-        sequence: data.sequencia,
+        sequence: data.seq,
       });
     } catch (error) {
       console.log('Data could not be inserted due to error:', error);
