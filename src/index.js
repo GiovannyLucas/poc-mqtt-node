@@ -48,7 +48,7 @@ async function bootstrap() {
         humidity.toString().replace('.', ','),
         ((windSpeed / 900) * WIND_SPEED_CONSTANT).toFixed(2).toString().replace('.', ','),
         minWindSpeed,
-        rainMillimeter * RAIN_CONSTANT,
+        (rainMillimeter * RAIN_CONSTANT).toFixed(2).toString().replace('.', ','),
         Intl.DateTimeFormat(
           'pt-BR',
           {
@@ -58,6 +58,7 @@ async function bootstrap() {
             hour: '2-digit',
             minute: '2-digit',
             second: '2-digit',
+            timeZone: 'America/Fortaleza'
           }
         ).format(new Date(createdAt))
       ].join(';') + '\r\n';
