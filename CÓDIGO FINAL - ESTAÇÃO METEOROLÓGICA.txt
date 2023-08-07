@@ -1,0 +1,216 @@
+#include <ESP8266WiFi.h>
+#include <PubSubClient.h>
+#include <DHT.h>
+//#define PRODUCAO
+
+// Configurações de WiFi e MQTT
+
+const char* ssid = "Eventos2023";
+const char* password = "mit@ufersa2023";
+
+const char* mqtt_server = "broker.emqx.io";
+const char* mqtt_username = "emqx";
+const char* mqtt_password = "public";
+const int mqtt_port = 1883;
+
+// Pinos e instâncias
+const int DHTPin = D4; 
+const int pinoAnemometro = D1;
+const int pinoPluviometro = D2;
+
+DHT dht(DHTPin, DHT22);
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+const unsigned long limiteBouncePluviometro = 250;
+const unsigned long limiteBounceAnemometro = 45;
+volatile int contagemPluviometro = 0;
+volatile int contagemAnemometro = 0;
+volatile int minimoAnemometro = INT_MAX;
+
+// Variáveis de leitura
+ //
+const unsigned int limiteTransicao = 25;
+const unsigned long periodoCurto = 5000;
+const unsigned long periodoLongo = 900000;
+unsigned long intervaloLeitura = periodoCurto;
+unsigned long ultimaLeitura = 0;
+unsigned int enviados = 0;
+unsigned int tentativas = 0;
+
+
+void incrementaTentativas() {
+  tentativas++;
+  if (tentativas==100){ 
+    ESP.restart();  
+  }
+}
+
+void incrementaEnviados() {      
+  if (enviados>=limiteTransicao) {
+    intervaloLeitura=periodoLongo; 
+  }
+   
+  enviados++;
+}
+
+void resetaTentativas() {
+  tentativas=0;
+  intervaloLeitura=periodoCurto;
+}
+
+void resetaTentativasMQTT() {
+  tentativas=0;
+  if(enviados>limiteTransicao){
+     intervaloLeitura=periodoLongo;
+  }
+}
+
+void resetaEnviados() {
+  enviados=0;
+  intervaloLeitura=periodoCurto;
+}
+
+void ICACHE_RAM_ATTR contaPulsosPluviometro() {
+  static unsigned long ultimoInstante = 0;
+  unsigned long instanteAtual = millis();
+  unsigned long decorrido = instanteAtual - ultimoInstante;
+
+  if(decorrido > 250)
+    contagemPluviometro++;
+    ultimoInstante = instanteAtual;
+}
+
+void ICACHE_RAM_ATTR contaPulsosAnemometro() {
+  static unsigned long ultimoInstante = 0;
+  unsigned long instanteAtual = millis();
+  unsigned long decorrido = instanteAtual - ultimoInstante;
+
+  if(decorrido > 45) {
+    contagemAnemometro++;
+    if(decorrido < minimoAnemometro)
+      minimoAnemometro = decorrido;
+  }
+  ultimoInstante = instanteAtual;
+}
+
+void setup() {
+
+  pinMode(pinoPluviometro, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(pinoPluviometro), contaPulsosPluviometro, FALLING);
+  pinMode(pinoAnemometro, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(pinoAnemometro), contaPulsosAnemometro, FALLING);
+#ifndef PRODUCAO
+  Serial.begin(115200);
+#endif
+  setupWiFi();
+  client.setServer(mqtt_server, mqtt_port);
+  dht.begin();
+}
+
+void loop() {
+  if (!client.connected()) {
+    reconnect();
+  }
+  client.loop();
+
+  unsigned long tempoAtual = millis();
+  if (tempoAtual - ultimaLeitura >= intervaloLeitura) {
+    ultimaLeitura = tempoAtual;
+
+    float temperatura = dht.readTemperature();
+    float umidade = dht.readHumidity();
+    int vento = contagemAnemometro;
+    int chuva = contagemPluviometro;
+    int sequencia = enviados;
+
+#ifndef PRODUCAO
+    Serial.print("Temperatura: ");
+    Serial.print(temperatura);
+    Serial.print(" ºC, Umidade: ");
+    Serial.print(umidade);
+    Serial.print(" %");
+    Serial.print(" Velocidade do vento: ");
+    Serial.print(vento);
+    Serial.print(" Medida de chuva: ");
+    Serial.print(chuva);
+    Serial.print(" Periodo minimo do Anemometro: ");
+    Serial.print(minimoAnemometro);
+    Serial.print(" Sequencia: ");
+    Serial.println(sequencia);
+#endif  
+    char Topic[] = "estacao_meteorologica/dados";
+    char tempPayload[8];
+    char umidPayload[8];
+    char ventoPayload[8];
+    char chuvaPayload[8];
+    char minimoPayload[20];
+    char sequenciaPayload[8];
+    char payload[100];
+        
+    dtostrf(temperatura, 1, 1, tempPayload);
+    dtostrf(umidade, 1, 1, umidPayload);
+    dtostrf(vento, 1, 0, ventoPayload);
+    dtostrf(chuva, 1, 0, chuvaPayload);
+    dtostrf(minimoAnemometro, 1, 0, minimoPayload);
+    dtostrf(sequencia, 1, 0, sequenciaPayload);
+
+    snprintf(payload, 100, "{\"temp\":%s,\"umi\":%s,\"vento\":%s,\"chuva\":%s,\"min\":%s,\"seq\":%s }", tempPayload, umidPayload, ventoPayload, chuvaPayload, minimoPayload, sequenciaPayload);               
+       
+    client.publish(Topic, payload);
+    incrementaEnviados();
+         
+    contagemAnemometro = 0;
+    contagemPluviometro = 0;
+    minimoAnemometro = INT_MAX;
+  }
+}
+
+void setupWiFi() {
+  delay(10);
+#ifndef PRODUCAO
+  Serial.println();
+  Serial.print("Conectando a ");
+  Serial.println(ssid);
+#endif
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+#ifndef PRODUCAO
+    Serial.print(".");
+    incrementaTentativas();
+#endif
+  }
+
+#ifndef PRODUCAO
+  Serial.println("");
+  Serial.println("WiFi conectado");
+  Serial.print("Endereço IP: ");
+  Serial.println(WiFi.localIP());
+  resetaTentativas();
+  resetaEnviados();
+#endif
+}
+
+
+void reconnect() {
+  while (!client.connected()) {
+#ifndef PRODUCAO
+    Serial.print("Tentando conectar ao servidor MQTT...");
+#endif
+    if (client.connect("ESP8266Client", mqtt_username, mqtt_password)) {
+#ifndef PRODUCAO
+      Serial.println("Conectado!");
+      resetaTentativasMQTT();
+#endif
+    } else {
+#ifndef PRODUCAO
+      Serial.print("Falha, rc=");
+      Serial.print(client.state());
+      Serial.println(" Tentando novamente em 5 segundos");
+      incrementaTentativas();
+#endif
+      delay(5000);
+    }
+  }
+}
